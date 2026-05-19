@@ -1,5 +1,5 @@
 SKILLS_DIR := $(HOME)/.claude/skills
-SKILLS := $(notdir $(wildcard $(CURDIR)/*/))
+SKILLS := $(shell find . -maxdepth 1 -mindepth 1 -type d -not -name '.*' -exec basename {} \;)
 
 .PHONY: install
 install:
