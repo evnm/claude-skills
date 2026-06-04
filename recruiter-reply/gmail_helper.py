@@ -10,6 +10,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -28,9 +29,14 @@ def get_service():
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds or not creds.valid:
+        needs_reauth = True
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                needs_reauth = False
+            except RefreshError:
+                pass
+        if needs_reauth:
             if not creds_path.exists():
                 print(f"Error: credentials.json not found at {creds_path}", file=sys.stderr)
                 sys.exit(1)
@@ -134,6 +140,40 @@ def cmd_fetch(args):
         })
 
     print(json.dumps(emails, indent=2))
+
+
+def cmd_fetch_thread(args):
+    service = get_service()
+
+    thread = service.users().threads().get(
+        userId="me",
+        id=args.thread_id,
+        format="full",
+    ).execute()
+
+    messages = []
+    for msg in thread.get("messages", []):
+        headers = msg["payload"]["headers"]
+        from_header = get_header(headers, "from")
+        match = re.match(r'^"?(.+?)"?\s*<(.+?)>$', from_header)
+        if match:
+            from_name = match.group(1).strip()
+            from_email = match.group(2).strip()
+        else:
+            from_name = from_header
+            from_email = from_header
+
+        body = decode_body(msg["payload"])
+        messages.append({
+            "gmail_message_id": msg["id"],
+            "from_name": from_name,
+            "from_email": from_email,
+            "subject": get_header(headers, "subject"),
+            "date": get_header(headers, "date"),
+            "body_text": body[:2000],
+        })
+
+    print(json.dumps(messages, indent=2))
 
 
 def cmd_send(args):
@@ -240,6 +280,9 @@ def main():
     p = sub.add_parser("fetch")
     p.add_argument("--since", required=True, help="ISO 8601 UTC timestamp")
 
+    p = sub.add_parser("fetch-thread")
+    p.add_argument("--thread-id", required=True)
+
     p = sub.add_parser("send")
     p.add_argument("--thread-id", required=True)
     p.add_argument("--message-id", required=True, help="Gmail message ID of the message being replied to")
@@ -266,6 +309,7 @@ def main():
     commands = {
         "auth": cmd_auth,
         "fetch": cmd_fetch,
+        "fetch-thread": cmd_fetch_thread,
         "send": cmd_send,
         "label": cmd_label,
         "archive": cmd_archive,
