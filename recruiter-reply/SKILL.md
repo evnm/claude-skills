@@ -14,7 +14,7 @@ Read `~/.claude/skills/recruiter-reply/state.json`. Use the `last_run` value as 
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py fetch --since "<last_run>"
 ```
 
-This prints a JSON array of email objects with fields: `gmail_message_id`, `rfc_message_id`, `thread_id`, `from_name`, `from_email`, `subject`, `body_text`, `date`.
+This prints a JSON array of email objects with fields: `gmail_message_id`, `rfc_message_id`, `thread_id`, `from_name`, `from_email`, `subject`, `body_text`, `date`. The `thread_id` can be passed to `fetch-thread` to retrieve all messages in a conversation thread.
 
 ### 3. Classify recruiter emails
 
@@ -35,17 +35,29 @@ If no recruiter emails are found, tell the user and skip to step 7 to still upda
 
 For each recruiter email in chronological order:
 
-a. Print the email as plain text in this format (no markdown blockquotes):
+a. Check whether this email is a follow-up in a longer thread. A follow-up is indicated by a `Re:` prefix in the subject, or by the email body containing quoted prior messages. If it is a follow-up, fetch the full thread:
+```bash
+~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py fetch-thread --thread-id "<thread_id>"
+```
+This returns a JSON array of all messages in the thread. Read the earlier messages and produce a 2–4 sentence **Thread summary** covering: the role/company being pitched, any compensation or remote/hybrid/in-office details mentioned, and how many times the recruiter has followed up.
+
+b. Print the email as plain text in this format (no markdown blockquotes):
 ```
 From: <from_name> <<from_email>>
 Subject: <subject>
-
+```
+If a thread summary was produced in step (a), print it next:
+```
+Thread summary: <summary>
+```
+Then print the latest message body:
+```
 │ <body line 1>
 │ <body line 2>
 │ ...
 ```
 
-b. Print the numbered option list built in step 4, followed by the prompt:
+c. Print the numbered option list built in step 4, followed by the prompt:
 ```
 1. <template name>
 2. <template name>
@@ -55,7 +67,7 @@ N. Skip
 Enter a number:
 ```
 
-c. Wait for the user to type a number in the chat and proceed accordingly.
+d. Wait for the user to type a number in the chat and proceed accordingly.
 
 ### 6. Process each choice
 
