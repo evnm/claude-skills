@@ -48,16 +48,15 @@ Run `make auth` to force re-authentication if a token ever needs to be refreshed
 
 ## Usage
 
-Invoke with `/recruiter-reply` in Claude Code.
+Apply a "recruitment" Gmail label to recruiter emails as they arrive (manually, or via a Gmail filter). Then invoke `/recruiter-reply` in Claude Code — it processes every unread email with that label.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Skill instructions read by Claude |
-| `gmail_helper.py` | Gmail API helper (fetch, send, label, archive) |
+| `gmail_helper.py` | Gmail API helper (fetch, send, archive, mark-read) |
 | `templates/` | Response templates — edit freely |
-| `state.json` | Last-run timestamp — gitignored |
 | `credentials.json` | OAuth2 client credentials — gitignored, you provide this |
 | `token.json` | OAuth2 access/refresh token — gitignored, auto-generated |
 

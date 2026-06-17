@@ -1,39 +1,26 @@
 # recruiter-reply
 
-Scan unread emails since the last run for recruiter pitches, let the user choose a response for each, send replies, and update state.
+Scan unread emails labeled "recruitment" for recruiter pitches, let the user choose a response for each, send replies, and update labels/read status.
 
 ## Steps
 
-### 1. Load state
-
-Read `~/.claude/skills/recruiter-reply/state.json`. Use the `last_run` value as the cutoff timestamp. If the file is missing or `last_run` is null, default to 7 days before today in ISO 8601 UTC format (e.g. `2026-05-12T00:00:00Z`).
-
-### 2. Fetch unread emails
+### 1. Fetch labeled emails
 
 ```bash
-~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py fetch --since "<last_run>"
+~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py fetch
 ```
 
-This prints a JSON array of email objects with fields: `gmail_message_id`, `rfc_message_id`, `thread_id`, `from_name`, `from_email`, `subject`, `body_text`, `date`. The `thread_id` can be passed to `fetch-thread` to retrieve all messages in a conversation thread.
+This prints a JSON array of unread emails with the "recruitment" label, with fields: `gmail_message_id`, `rfc_message_id`, `thread_id`, `from_name`, `from_email`, `subject`, `body_text`, `date`. The `thread_id` can be passed to `fetch-thread` to retrieve all messages in a conversation thread.
 
-### 3. Classify recruiter emails
+If the array is empty, tell the user there's nothing to process and stop.
 
-For each email, decide if it is a recruiter pitch. Signals:
-- Sender identifies as a recruiter, sourcer, talent acquisition rep, or engineering/technical leader at a company
-- Describes a software engineering role or opportunity
-- Pitches the company or asks to schedule a call, chat, or interview
-
-Exclude everything else: newsletters, GitHub notifications, billing, personal mail, etc.
-
-### 4. Load templates
+### 2. Load templates
 
 Read all `.md` files in `~/.claude/skills/recruiter-reply/templates/`. For each file, parse the YAML frontmatter to extract the `name` field. Sort the files alphabetically by filename. Build a numbered list with these templates followed by a fixed final option: **Skip** (no reply; leave email unread).
 
-### 5. Interactive loop
+### 3. Interactive loop
 
-If no recruiter emails are found, tell the user and skip to step 7 to still update state.
-
-For each recruiter email in chronological order:
+For each email in chronological order:
 
 a. Check whether this email is a follow-up in a longer thread. A follow-up is indicated by a `Re:` prefix in the subject, or by the email body containing quoted prior messages. If it is a follow-up, fetch the full thread:
 ```bash
@@ -57,7 +44,7 @@ Then print the latest message body:
 │ ...
 ```
 
-c. Print the numbered option list built in step 4, followed by the prompt:
+c. Print the numbered option list built in step 2, followed by the prompt:
 ```
 1. <template name>
 2. <template name>
@@ -69,7 +56,7 @@ Enter a number:
 
 d. Wait for the user to type a number in the chat and proceed accordingly.
 
-### 6. Process each choice
+### 4. Process each choice
 
 **For any template option (not Skip):**
 
@@ -86,24 +73,16 @@ e. Send the reply:
   --subject "<subject>" \
   --body-file /tmp/recruiter_reply_body.txt
 ```
-f. Add label, archive, mark read:
+f. Archive and mark read:
 ```bash
-~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py label --message-id "<gmail_message_id>" --label "recruitment"
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py archive --message-id "<gmail_message_id>"
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py mark-read --message-id "<gmail_message_id>"
 ```
 
 **For Skip:**
 
-Add label and archive, but do NOT mark as read (the user wants to see the unread badge under the "recruitment" label):
+Archive and mark read (the email keeps its "recruitment" label, so it stays out of future runs):
 ```bash
-~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py label --message-id "<gmail_message_id>" --label "recruitment"
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py archive --message-id "<gmail_message_id>"
-```
-
-### 7. Update state
-
-Write the current UTC timestamp to `~/.claude/skills/recruiter-reply/state.json`:
-```json
-{"last_run": "<current ISO 8601 UTC timestamp>"}
+~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py mark-read --message-id "<gmail_message_id>"
 ```

@@ -7,7 +7,6 @@ import email.mime.text
 import json
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -96,12 +95,9 @@ def decode_body(payload):
 def cmd_fetch(args):
     service = get_service()
 
-    since_dt = datetime.fromisoformat(args.since.replace("Z", "+00:00"))
-    since_unix = int(since_dt.timestamp())
-
     results = service.users().messages().list(
         userId="me",
-        q=f"is:unread after:{since_unix}",
+        q="label:recruitment is:unread",
         maxResults=100,
     ).execute()
 
@@ -217,35 +213,6 @@ def cmd_send(args):
     print(json.dumps({"status": "sent"}))
 
 
-def ensure_label(service, label_name):
-    """Return the ID of an existing label, creating it if necessary."""
-    labels = service.users().labels().list(userId="me").execute()
-    for label in labels.get("labels", []):
-        if label["name"].lower() == label_name.lower():
-            return label["id"]
-
-    created = service.users().labels().create(
-        userId="me",
-        body={
-            "name": label_name,
-            "labelListVisibility": "labelShow",
-            "messageListVisibility": "show",
-        },
-    ).execute()
-    return created["id"]
-
-
-def cmd_label(args):
-    service = get_service()
-    label_id = ensure_label(service, args.label)
-    service.users().messages().modify(
-        userId="me",
-        id=args.message_id,
-        body={"addLabelIds": [label_id]},
-    ).execute()
-    print(json.dumps({"status": "labeled", "label": args.label}))
-
-
 def cmd_archive(args):
     service = get_service()
     service.users().messages().modify(
@@ -277,8 +244,7 @@ def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command")
 
-    p = sub.add_parser("fetch")
-    p.add_argument("--since", required=True, help="ISO 8601 UTC timestamp")
+    sub.add_parser("fetch")
 
     p = sub.add_parser("fetch-thread")
     p.add_argument("--thread-id", required=True)
@@ -291,10 +257,6 @@ def main():
     body_group = p.add_mutually_exclusive_group(required=True)
     body_group.add_argument("--body")
     body_group.add_argument("--body-file")
-
-    p = sub.add_parser("label")
-    p.add_argument("--message-id", required=True)
-    p.add_argument("--label", required=True)
 
     p = sub.add_parser("archive")
     p.add_argument("--message-id", required=True)
@@ -311,7 +273,6 @@ def main():
         "fetch": cmd_fetch,
         "fetch-thread": cmd_fetch_thread,
         "send": cmd_send,
-        "label": cmd_label,
         "archive": cmd_archive,
         "mark-read": cmd_mark_read,
     }
