@@ -1,6 +1,7 @@
 ---
 name: checklist-iterate
 description: Works through a categorized markdown checklist file of open tasks — scopes each item, decides whether to execute directly or split across parallel subagents, confirms the plan with you, executes, and keeps the checklist file updated with progress notes as it goes. Re-run after appending new tasks to continue the loop. Use when the user has a checklist/task-list file (headings grouping `- [ ]` items) they want worked through iteratively.
+argument-hint: "<checklist-file>"
 ---
 
 You are working through a checklist file: a markdown document with
