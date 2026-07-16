@@ -14,13 +14,31 @@ This prints a JSON array of unread emails with the "recruitment" label, with fie
 
 If the array is empty, tell the user there's nothing to process and stop.
 
-### 2. Load templates
+### 2. Group by sender/company and auto-skip duplicates
+
+Sort all fetched emails chronologically (oldest first). Then walk through them and assign each one a **dedup key** identifying the recruiter/company behind it:
+
+- Prefer the company name — pull it from the subject line, the body, or the sender's email domain (e.g. `jacobduligall@ivo.ai` → Ivo, a LinkedIn InMail pitching "Suno" → Suno).
+- If no company can be confidently identified, fall back to the sender's `from_name` (the human recruiter), since the same person may email from more than one address (e.g. a direct company address and `inmail-hit-reply@linkedin.com`).
+- If neither is identifiable, fall back to `from_email`.
+
+For each email, check whether its dedup key has already been seen earlier in this same run (including plain thread replies — `Re:` subject or quoted prior messages — which always share a key with the message they reply to). 
+
+- The **first (earliest)** email for a given dedup key is a "primary" email — it goes through the normal interactive loop in step 4.
+- Every **later** email sharing that key is a duplicate or "bump" (a follow-up nudge, a repeat pitch for a different role at the same company, or the same recruiter reaching out from a different address). Auto-skip it without prompting: archive and mark read using the same commands as the Skip action in step 5, and print one line per auto-skipped email, e.g.:
+```
+Auto-skipped (duplicate of "<subject of primary email>"): <from_name> <<from_email>> — <subject>
+```
+
+Only primary emails proceed to step 3.
+
+### 3. Load templates
 
 Read all `.md` files in `~/.claude/skills/recruiter-reply/templates/`. For each file, parse the YAML frontmatter to extract the `name` field. Sort the files alphabetically by filename. Build a numbered list with these templates followed by a fixed final option: **Skip** (no reply; leave email unread).
 
-### 3. Interactive loop
+### 4. Interactive loop
 
-For each email in chronological order:
+For each primary email in chronological order:
 
 a. Check whether this email is a follow-up in a longer thread. A follow-up is indicated by a `Re:` prefix in the subject, or by the email body containing quoted prior messages. If it is a follow-up, fetch the full thread:
 ```bash
@@ -44,7 +62,7 @@ Then print the latest message body:
 │ ...
 ```
 
-c. Print the numbered option list built in step 2, followed by the prompt:
+c. Print the numbered option list built in step 3, followed by the prompt:
 ```
 1. <template name>
 2. <template name>
@@ -56,7 +74,7 @@ Enter a number:
 
 d. Wait for the user to type a number in the chat and proceed accordingly.
 
-### 4. Process each choice
+### 5. Process each choice
 
 **For any template option (not Skip):**
 
