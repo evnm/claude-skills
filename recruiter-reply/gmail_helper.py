@@ -172,6 +172,20 @@ def cmd_fetch_thread(args):
     print(json.dumps(messages, indent=2))
 
 
+def validate_body(body):
+    """Refuse to send anything that is not a fully formed reply."""
+    problems = []
+    if not body.strip():
+        problems.append("body is empty")
+    if re.search(r"\{[A-Za-z_]+\}", body):
+        problems.append("unfilled template placeholder (e.g. {name} or {company})")
+    if body.lstrip().startswith("---") or re.search(r"^name:\s", body, re.MULTILINE):
+        problems.append("template YAML frontmatter was not stripped")
+    if problems:
+        print(json.dumps({"status": "refused", "problems": problems}), file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_send(args):
     service = get_service()
 
@@ -180,6 +194,8 @@ def cmd_send(args):
             body = f.read()
     else:
         body = args.body
+
+    validate_body(body)
 
     # Fetch original message headers for proper threading
     original = service.users().messages().get(

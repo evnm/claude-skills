@@ -81,8 +81,9 @@ d. Wait for the user to type a number in the chat and proceed accordingly.
 a. Read the selected template file. Strip the YAML frontmatter block (everything between the opening and closing `---` lines) before using the body.
 b. Replace `{name}` with the sender's first name.
 c. If the template body contains `{company}`: replace it with the company name from the email. If you cannot determine the company name, ask the user before sending.
-d. Write the filled body to `/tmp/recruiter_reply_body.txt`
-e. Send the reply:
+d. Write the filled body to `/tmp/recruiter_reply_body.txt` using the Write tool (not shell text-processing pipelines like `sed`/`awk`, which can silently produce an empty file).
+e. Verify before sending: Read `/tmp/recruiter_reply_body.txt` back and confirm it is non-empty, contains no leftover `{name}`/`{company}` placeholders or YAML frontmatter, and matches the selected template with the right name substituted. If anything is off, fix it and re-verify. Never send unless you are fully confident the content is exactly what should go out. (`gmail_helper.py send` also refuses empty bodies, unfilled placeholders, and unstripped frontmatter, but this check does not replace yours.)
+f. Send the reply:
 ```bash
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py send \
   --thread-id "<thread_id>" \
@@ -91,7 +92,7 @@ e. Send the reply:
   --subject "<subject>" \
   --body-file /tmp/recruiter_reply_body.txt
 ```
-f. Archive and mark read:
+g. Archive and mark read (only if the send command succeeded):
 ```bash
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py archive --message-id "<gmail_message_id>"
 ~/.claude/skills/recruiter-reply/.venv/bin/python ~/.claude/skills/recruiter-reply/gmail_helper.py mark-read --message-id "<gmail_message_id>"
