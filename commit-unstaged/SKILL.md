@@ -3,6 +3,8 @@ name: commit-unstaged
 description: Checks unstaged changes into Git as a sequence of commits with high quality commit messages. Use this whenever the user asks you to commit changes.
 ---
 
+**Never invoke this skill on your own initiative.** Only run it when the user explicitly asks you to commit. Do not start it because a milestone, plan step or task finished, and do not treat a plan that says "commit at the end of each milestone" as that request. Work you just prototyped will be iterated on, and commits made too early have to be redone. The user decides when a body of work is at a good stopping point to cement into commits. Until they say so, leave changes uncommitted and say they are uncommitted.
+
 Read the unstaged changes (i.e. the output of `git diff`, plus the contents of any untracked files), think about code change(s) they represent, and then help me check the changes in to Git in a series of commits.
 
 This interaction occurs in two parts:
