@@ -176,8 +176,7 @@ def cmd_fetch_thread(args):
     print(json.dumps(messages, indent=2))
 
 
-def validate_body(body):
-    """Refuse to send anything that is not a fully formed reply."""
+def body_problems(body):
     problems = []
     if not body.strip():
         problems.append("body is empty")
@@ -185,9 +184,46 @@ def validate_body(body):
         problems.append("unfilled template placeholder (e.g. {name} or {company})")
     if body.lstrip().startswith("---") or re.search(r"^name:\s", body, re.MULTILINE):
         problems.append("template YAML frontmatter was not stripped")
+    return problems
+
+
+def validate_body(body):
+    """Refuse to send anything that is not a fully formed reply."""
+    problems = body_problems(body)
     if problems:
         print(json.dumps({"status": "refused", "problems": problems}), file=sys.stderr)
         sys.exit(1)
+
+
+def send_reply(service, thread_id, message_id, to, subject, body):
+    # Fetch original message headers for proper threading
+    original = service.users().messages().get(
+        userId="me",
+        id=message_id,
+        format="metadata",
+        metadataHeaders=["Message-ID", "References"],
+    ).execute()
+
+    orig_headers = original["payload"]["headers"]
+    orig_message_id = get_header(orig_headers, "message-id")
+    orig_references = get_header(orig_headers, "references")
+
+    references = f"{orig_references} {orig_message_id}".strip() if orig_references else orig_message_id
+
+    subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+
+    msg = email.mime.text.MIMEText(body, "plain")
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg["In-Reply-To"] = orig_message_id
+    msg["References"] = references
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+    service.users().messages().send(
+        userId="me",
+        body={"raw": raw, "threadId": thread_id},
+    ).execute()
 
 
 def cmd_send(args):
@@ -200,36 +236,7 @@ def cmd_send(args):
         body = args.body
 
     validate_body(body)
-
-    # Fetch original message headers for proper threading
-    original = service.users().messages().get(
-        userId="me",
-        id=args.message_id,
-        format="metadata",
-        metadataHeaders=["Message-ID", "References"],
-    ).execute()
-
-    orig_headers = original["payload"]["headers"]
-    orig_message_id = get_header(orig_headers, "message-id")
-    orig_references = get_header(orig_headers, "references")
-
-    references = f"{orig_references} {orig_message_id}".strip() if orig_references else orig_message_id
-
-    subject = args.subject if args.subject.lower().startswith("re:") else f"Re: {args.subject}"
-
-    msg = email.mime.text.MIMEText(body, "plain")
-    msg["To"] = args.to
-    msg["Subject"] = subject
-    msg["In-Reply-To"] = orig_message_id
-    msg["References"] = references
-
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-
-    service.users().messages().send(
-        userId="me",
-        body={"raw": raw, "threadId": args.thread_id},
-    ).execute()
-
+    send_reply(service, args.thread_id, args.message_id, args.to, args.subject, body)
     print(json.dumps({"status": "sent"}))
 
 
