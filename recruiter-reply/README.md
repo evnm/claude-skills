@@ -48,23 +48,23 @@ Run `make auth` to force re-authentication if a token ever needs to be refreshed
 
 ## Usage
 
-Apply a "recruitment" Gmail label to recruiter emails as they arrive (manually, or via a Gmail filter). Then invoke `/recruiter-reply` in Claude Code — it processes every unread email with that label.
+Apply a "recruitment" Gmail label to recruiter emails as they arrive (manually, or via a Gmail filter). Then invoke `/recruiter-reply` in Claude Code. It reads every unread email with that label up front, shows a digest of each role with a suggested reply, and sends everything as one batch after you confirm.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Skill instructions read by Claude |
-| `gmail_helper.py` | Gmail API helper (fetch, send, archive, mark-read) |
+| `gmail_helper.py` | Gmail API helper (prepare, batch apply, fetch, send, archive, mark-read) |
 | `templates/` | Response templates — edit freely |
 | `credentials.json` | OAuth2 client credentials — gitignored, you provide this |
 | `token.json` | OAuth2 access/refresh token — gitignored, auto-generated |
 
 ## Customizing templates
 
-Templates live in `templates/`. Add a new `.md` file there and it will automatically appear as an option the next time the skill runs — no changes to `SKILL.md` needed.
+Templates live in `templates/`. The suggested replies use `request-more-info`, `immediate-decline`, and `more-info-decline`. Any other template can be chosen by typing its name under "Other" in the prompt.
 
-Each template must start with a YAML frontmatter block containing a `name` field, which is used as the label in the numbered list:
+Each template must start with a YAML frontmatter block containing a `name` field:
 
 ```markdown
 ---
