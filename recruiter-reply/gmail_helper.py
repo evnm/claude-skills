@@ -4,6 +4,7 @@
 import argparse
 import base64
 import email.mime.text
+import html as html_lib
 import json
 import re
 import sys
@@ -54,6 +55,11 @@ def get_header(headers, name):
     return ""
 
 
+def html_to_text(raw):
+    raw = re.sub(r"(?is)<(style|script|head)\b.*?</\1>", " ", raw)
+    return html_lib.unescape(re.sub(r"<[^>]+>", " ", raw))
+
+
 def decode_body(payload):
     """Extract plain text from a message payload, handling multipart MIME."""
     mime = payload.get("mimeType", "")
@@ -66,8 +72,7 @@ def decode_body(payload):
     if mime == "text/html":
         data = payload.get("body", {}).get("data", "")
         if data:
-            html = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-            return re.sub(r"<[^>]+>", " ", html)
+            return html_to_text(base64.urlsafe_b64decode(data).decode("utf-8", errors="replace"))
 
     if "parts" in payload:
         # Prefer text/plain parts
@@ -81,8 +86,7 @@ def decode_body(payload):
             if part.get("mimeType") == "text/html":
                 data = part.get("body", {}).get("data", "")
                 if data:
-                    html = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                    return re.sub(r"<[^>]+>", " ", html)
+                    return html_to_text(base64.urlsafe_b64decode(data).decode("utf-8", errors="replace"))
         # Recurse into nested multipart
         for part in payload["parts"]:
             result = decode_body(part)
