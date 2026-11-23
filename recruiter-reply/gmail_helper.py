@@ -8,6 +8,8 @@ import html as html_lib
 import json
 import re
 import sys
+import tempfile
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -18,6 +20,8 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 SKILL_DIR = Path(__file__).parent
+TEMPLATES_DIR = SKILL_DIR / "templates"
+NON_REPLY_ACTIONS = {"leave-unread", "archive"}
 
 
 def get_service():
@@ -240,6 +244,192 @@ def cmd_send(args):
     print(json.dumps({"status": "sent"}))
 
 
+def message_time(item):
+    try:
+        return parsedate_to_datetime(item["date"]).timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def digest_text(body):
+    """Drop link targets and extra whitespace so Claude reads only the pitch."""
+    body = re.sub(r"<https?://[^>]+>", "", body)
+    body = re.sub(r"https?://\S{60,}", "[link]", body)
+    body = re.sub(r"[ \t]+", " ", body)
+    return re.sub(r"\n\s*\n+", "\n\n", body).strip()[:8000]
+
+
+def cmd_prepare(args):
+    """Fetch every unread email and save a private run directory for this batch."""
+    service = get_service()
+
+    refs = []
+    page_token = None
+    while True:
+        results = service.users().messages().list(
+            userId="me",
+            q="label:recruitment is:unread",
+            maxResults=100,
+            pageToken=page_token,
+        ).execute()
+        refs.extend(results.get("messages", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+
+    emails = []
+    for ref in refs:
+        msg = service.users().messages().get(userId="me", id=ref["id"], format="full").execute()
+        headers = msg["payload"]["headers"]
+        from_header = get_header(headers, "from")
+        match = re.match(r'^"?(.+?)"?\s*<(.+?)>$', from_header)
+        from_name, from_email = (
+            (match.group(1).strip(), match.group(2).strip()) if match else (from_header, from_header)
+        )
+        emails.append({
+            "gmail_message_id": msg["id"],
+            "thread_id": msg["threadId"],
+            "from_name": from_name,
+            "from_email": from_email,
+            "subject": get_header(headers, "subject"),
+            "date": get_header(headers, "date"),
+            "full_body": decode_body(msg["payload"]),
+        })
+    emails.sort(key=message_time)
+
+    run_dir = Path(tempfile.mkdtemp(prefix="recruiter-reply-"))
+    emails_dir = run_dir / "emails"
+    emails_dir.mkdir()
+    for i, item in enumerate(emails, 1):
+        slug = re.sub(r"[^a-z0-9]+", "-", item["from_name"].lower()).strip("-")[:40] or "email"
+        path = emails_dir / f"{i:02d}-{slug}.txt"
+        path.write_text(
+            f"From: {item['from_name']} <{item['from_email']}>\n"
+            f"Date: {item['date']}\n"
+            f"Subject: {item['subject']}\n\n"
+            f"{item.pop('full_body')}\n"
+        )
+        item["full_email_path"] = str(path)
+        item["body_text"] = digest_text(path.read_text().split("\n\n", 1)[1])
+
+    emails_path = run_dir / "emails.json"
+    emails_path.write_text(json.dumps(emails, indent=2))
+    print(json.dumps({"run_dir": str(run_dir), "emails_path": str(emails_path), "count": len(emails)}))
+
+
+def render_template(action, name, company):
+    text = (TEMPLATES_DIR / f"{action}.md").read_text()
+    match = re.match(r"\A---\s*\n.*?\n---\s*\n", text, re.DOTALL)
+    body = text[match.end():].lstrip("\n") if match else text
+    return body.replace("{name}", name or "{name}").replace("{company}", company or "{company}")
+
+
+def build_plan(run_dir):
+    """Validate the whole plan up front. Returns (steps, problems)."""
+    emails = {e["gmail_message_id"]: e for e in json.loads((run_dir / "emails.json").read_text())}
+    decisions = json.loads((run_dir / "plan.json").read_text())["decisions"]
+    by_id = {}
+    problems = []
+
+    for d in decisions:
+        mid = d.get("message_id")
+        if mid not in emails:
+            problems.append(f"{mid}: not in this run")
+        elif mid in by_id:
+            problems.append(f"{mid}: listed twice")
+        else:
+            by_id[mid] = d
+    for mid in emails.keys() - by_id.keys():
+        problems.append(f"{mid}: no decision")
+
+    steps = []
+    for mid, d in by_id.items():
+        action = d.get("action", "")
+        e = emails[mid]
+        step = {"message_id": mid, "action": action, "to": e["from_email"],
+                "subject": e["subject"], "thread_id": e["thread_id"], "body": None}
+        primary = d.get("duplicate_of")
+        if primary:
+            if action != "archive":
+                problems.append(f"{mid}: a duplicate must use action archive")
+            if primary not in by_id or by_id[primary].get("duplicate_of"):
+                problems.append(f"{mid}: duplicate_of must name a primary email")
+            elif by_id[primary].get("action") == "leave-unread":
+                step["action"] = "leave-unread"
+        elif action not in NON_REPLY_ACTIONS:
+            if not (TEMPLATES_DIR / f"{action}.md").is_file():
+                problems.append(f"{mid}: unknown action {action!r}")
+            else:
+                step["body"] = render_template(action, d.get("name"), d.get("company"))
+                problems.extend(f"{mid}: {p}" for p in body_problems(step["body"]))
+        steps.append(step)
+    return steps, problems
+
+
+def cmd_apply(args):
+    """Carry out a confirmed plan. Safe to rerun: finished steps are not repeated."""
+    run_dir = Path(args.run_dir)
+    steps, problems = build_plan(run_dir)
+    if problems:
+        print(json.dumps({"status": "refused", "problems": problems}, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+    if args.dry_run:
+        print(json.dumps({"status": "dry_run", "steps": [
+            {k: s[k] for k in ("message_id", "action", "to", "subject", "body")} for s in steps
+        ]}, indent=2))
+        return
+
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+
+    def save():
+        tmp = state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2))
+        tmp.replace(state_path)
+
+    service = get_service()
+    counts = {"sent": 0, "archived": 0, "left_unread": 0}
+    unconfirmed = []
+
+    for step in steps:
+        mid = step["message_id"]
+        if step["action"] == "leave-unread":
+            counts["left_unread"] += 1
+            continue
+        record = state.setdefault(mid, {})
+        try:
+            if step["body"] is not None and not record.get("sent"):
+                # A failed send may still have gone out, so never retry it silently.
+                if record.get("send_started") and not args.retry_unconfirmed:
+                    unconfirmed.append({"message_id": mid, "to": step["to"], "subject": step["subject"]})
+                    continue
+                record["send_started"] = True
+                save()
+                send_reply(service, step["thread_id"], mid, step["to"], step["subject"], step["body"])
+                record["sent"] = True
+                save()
+                counts["sent"] += 1
+            if not record.get("archived"):
+                service.users().messages().modify(
+                    userId="me",
+                    id=mid,
+                    body={"removeLabelIds": ["INBOX", "UNREAD"]},
+                ).execute()
+                record["archived"] = True
+                save()
+                counts["archived"] += 1
+        except Exception as exc:
+            print(json.dumps({"status": "failed", "message_id": mid, "to": step["to"],
+                              "error": str(exc), "completed": counts}), file=sys.stderr)
+            sys.exit(1)
+
+    print(json.dumps({"status": "unconfirmed" if unconfirmed else "done",
+                      "completed": counts, "unconfirmed": unconfirmed}))
+    if unconfirmed:
+        sys.exit(1)
+
+
 def cmd_archive(args):
     service = get_service()
     service.users().messages().modify(
@@ -272,6 +462,13 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("fetch")
+    sub.add_parser("prepare")
+
+    p = sub.add_parser("apply")
+    p.add_argument("--run-dir", required=True)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--retry-unconfirmed", action="store_true",
+                   help="Resend replies whose earlier send attempt had no confirmed result")
 
     p = sub.add_parser("fetch-thread")
     p.add_argument("--thread-id", required=True)
@@ -298,6 +495,8 @@ def main():
     commands = {
         "auth": cmd_auth,
         "fetch": cmd_fetch,
+        "prepare": cmd_prepare,
+        "apply": cmd_apply,
         "fetch-thread": cmd_fetch_thread,
         "send": cmd_send,
         "archive": cmd_archive,
